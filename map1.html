@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Birthplace Map · Real-time</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a1620; color: #e0e0e0; }
+        .app { display: flex; flex-direction: column; height: 100vh; }
+        .map-wrapper { flex: 3; position: relative; border-bottom: 3px solid #00d4ff; }
+        #map { height: 100%; width: 100%; background: #1a2a3a; }
+        .panel { flex: 1; background: #0f1a24; padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+        @media (min-width: 900px) { .app { flex-direction: row; } .map-wrapper { flex: 3; border-bottom: none; border-right: 3px solid #00d4ff; } .panel { flex: 1; min-width: 320px; } }
+        .stats-card { background: linear-gradient(135deg, #1a2a3a 0%, #0f1a24 100%); border-radius: 20px; padding: 20px; text-align: center; border: 1px solid rgba(0,212,255,0.3); }
+        .stats-number { font-size: 3.5rem; font-weight: bold; color: #00d4ff; }
+        .stats-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 2px; margin-top: 8px; color: #a0b0c0; }
+        .qr-card { background: #16242e; border-radius: 20px; padding: 16px; text-align: center; border: 1px solid #2a3a48; }
+        .btn-group { display: flex; gap: 12px; flex-wrap: wrap; }
+        button { background: #00d4ff; border: none; padding: 12px 20px; border-radius: 40px; font-weight: 600; cursor: pointer; flex: 1; transition: all 0.2s; color: #0a1620; }
+        button:hover { background: #00e5ff; transform: translateY(-2px); }
+        .btn-outline { background: transparent; border: 1px solid #00d4ff; color: #00d4ff; }
+        .recent-list { background: #0a141c; border-radius: 16px; padding: 12px; max-height: 200px; overflow-y: auto; }
+        .recent-item { padding: 8px; border-bottom: 1px solid #1e2e3a; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
+        .status { font-size: 0.75rem; color: #00d4ff; text-align: center; padding: 8px; background: #0a141c; border-radius: 12px; }
+        h3 { font-size: 1rem; margin-bottom: 12px; color: #00d4ff; }
+        .instructions { font-size: 0.8rem; background: #0a141c; padding: 12px; border-radius: 12px; line-height: 1.5; }
+        a { color: #00d4ff; }
+        .stats-btn { background: #4a6a8a; color: white; }
+        .stats-btn:hover { background: #5a7a9a; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: #0f1a24; border-radius: 24px; padding: 30px; max-width: 500px; width: 90%; border: 1px solid #00d4ff; max-height: 80vh; overflow-y: auto; }
+        .modal-content h2 { color: #00d4ff; margin-bottom: 20px; }
+        .modal-content h3 { color: #00d4ff; margin-top: 20px; margin-bottom: 12px; }
+        .close-btn { margin-top: 20px; background: #2a3a48; color: white; width: 100%; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <div class="map-wrapper"><div id="map"></div></div>
+    <div class="panel">
+        <div class="stats-card">
+            <div class="stats-number" id="pinCount">0</div>
+            <div class="stats-label">🌍 Birthplaces Marked</div>
+        </div>
+        <div class="qr-card">
+            <div style="font-size: 0.9rem; font-weight: bold; margin-bottom: 8px;">📱 SCAN TO JOIN</div>
+            <div id="qrCodeContainer" style="background:white; padding:10px; border-radius:16px; display:inline-block; margin:0 auto;"></div>
+            <div id="formLinkDisplay" style="font-size: 0.7rem; margin-top: 8px;"></div>
+            <div style="margin-top: 10px; font-size:0.7rem; color:#00d4ff;">⚡ Real-time · Never disappears</div>
+        </div>
+        <div class="btn-group">
+            <button id="exportBtn">📎 Export to Excel</button>
+            <button id="refreshBtn" class="btn-outline">🔄 Force Sync</button>
+            <button id="statsBtn" class="stats-btn">📊 Show Statistics</button>
+        </div>
+        <div><h3>🕒 Recent Participants</h3><div class="recent-list" id="recentList">Waiting for data...</div></div>
+        <div class="instructions">
+            <strong>📋 How to participate:</strong><br>
+            1️⃣ Scan QR code above<br>
+            2️⃣ Enter your <strong>Name, Country, City</strong><br>
+            3️⃣ Select city from dropdown<br>
+            4️⃣ Submit → Your pin appears instantly! ✨
+        </div>
+        <div class="status" id="statusMsg">🟢 Live: Real-time API</div>
+    </div>
+</div>
+
+<div id="statsModal" class="modal">
+    <div class="modal-content">
+        <h2>📊 Participant Statistics</h2>
+        <div id="statsContent"></div>
+        <button id="closeStatsBtn" class="close-btn">Close</button>
+    </div>
+</div>
+
+<script>
+    // ============================================================
+    // ✏️ 只修改这两行
+    // ============================================================
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbztzKh9yvCE-SCgTGgv3i5eCqzPfaRD8F9W57bNExQT76EVhViUejfNsY7QkaqMEmQ-/exec";  // Apps Script URL
+    const SUBMIT_PAGE_URL = "https://yz77-glitch.github.io/birthplace-map/submission1.html";  // submission1.html 的完整地址
+    // ============================================================
+
+    // 国家 → 大洲映射
+    const countryToContinent = {
+    // 欧洲 (Europe)
+    "UK": "Europe", "United Kingdom": "Europe", "Great Britain": "Europe", "England": "Europe",
+    "Germany": "Europe", "France": "Europe", "Italy": "Europe", "Spain": "Europe",
+    "Netherlands": "Europe", "Switzerland": "Europe", "Sweden": "Europe", "Norway": "Europe",
+    "Denmark": "Europe", "Poland": "Europe", "Portugal": "Europe", "Belgium": "Europe",
+    "Austria": "Europe", "Greece": "Europe", "Turkey": "Europe", "Ireland": "Europe",
+    "Finland": "Europe", "Czech Republic": "Europe", "Hungary": "Europe", "Romania": "Europe",
+    "Ukraine": "Europe", "Russia": "Europe", "Iceland": "Europe", "Croatia": "Europe",
+    "Serbia": "Europe", "Bulgaria": "Europe", "Slovakia": "Europe", "Slovenia": "Europe",
+    "Lithuania": "Europe", "Latvia": "Europe", "Estonia": "Europe", "Luxembourg": "Europe",
+    "Monaco": "Europe", "Vatican City": "Europe", "San Marino": "Europe", "Andorra": "Europe",
+    "Malta": "Europe", "Cyprus": "Europe", "Albania": "Europe", "Bosnia": "Europe",
+    "North Macedonia": "Europe", "Montenegro": "Europe", "Belarus": "Europe", "Moldova": "Europe",
+
+    // 亚洲 (Asia)
+    "China": "Asia", "Japan": "Asia", "South Korea": "Asia", "Korea": "Asia",
+    "India": "Asia", "Singapore": "Asia", "Thailand": "Asia", "Vietnam": "Asia",
+    "Malaysia": "Asia", "Indonesia": "Asia", "Philippines": "Asia", "Pakistan": "Asia",
+    "Bangladesh": "Asia", "Sri Lanka": "Asia", "Nepal": "Asia", "Bhutan": "Asia",
+    "Myanmar": "Asia", "Cambodia": "Asia", "Laos": "Asia", "Brunei": "Asia",
+    "Mongolia": "Asia", "Taiwan": "Asia", "Hong Kong": "Asia", "Macau": "Asia",
+    "Afghanistan": "Asia", "Iran": "Asia", "Iraq": "Asia", "Saudi Arabia": "Asia",
+    "Yemen": "Asia", "Oman": "Asia", "UAE": "Asia", "United Arab Emirates": "Asia",
+    "Qatar": "Asia", "Bahrain": "Asia", "Kuwait": "Asia", "Jordan": "Asia",
+    "Lebanon": "Asia", "Syria": "Asia", "Israel": "Asia", "Palestine": "Asia",
+    "Armenia": "Asia", "Georgia": "Asia", "Azerbaijan": "Asia", "Kazakhstan": "Asia",
+    "Uzbekistan": "Asia", "Turkmenistan": "Asia", "Kyrgyzstan": "Asia", "Tajikistan": "Asia",
+    "Maldives": "Asia", "Timor-Leste": "Asia",
+
+    // 北美洲 (North America)
+    "USA": "North America", "US": "North America", "United States": "North America",
+    "Canada": "North America", "Mexico": "North America", "Greenland": "North America",
+    "Guatemala": "North America", "Belize": "North America", "Honduras": "North America",
+    "El Salvador": "North America", "Nicaragua": "North America", "Costa Rica": "North America",
+    "Panama": "North America", "Cuba": "North America", "Jamaica": "North America",
+    "Haiti": "North America", "Dominican Republic": "North America", "Puerto Rico": "North America",
+    "Bahamas": "North America", "Barbados": "North America", "Trinidad": "North America",
+    "Saint Lucia": "North America", "Grenada": "North America", "Antigua": "North America",
+
+    // 南美洲 (South America)
+    "Brazil": "South America", "Argentina": "South America", "Chile": "South America",
+    "Peru": "South America", "Colombia": "South America", "Venezuela": "South America",
+    "Ecuador": "South America", "Bolivia": "South America", "Paraguay": "South America",
+    "Uruguay": "South America", "Guyana": "South America", "Suriname": "South America",
+    "French Guiana": "South America",
+
+    // 大洋洲 (Oceania)
+    "Australia": "Oceania", "New Zealand": "Oceania", "Papua New Guinea": "Oceania",
+    "Fiji": "Oceania", "Solomon Islands": "Oceania", "Vanuatu": "Oceania",
+    "Samoa": "Oceania", "Tonga": "Oceania", "Kiribati": "Oceania",
+    "Micronesia": "Oceania", "Marshall Islands": "Oceania", "Palau": "Oceania",
+    "Nauru": "Oceania", "Tuvalu": "Oceania", "Cook Islands": "Oceania",
+    "New Caledonia": "Oceania", "French Polynesia": "Oceania", "Guam": "Oceania",
+
+    // 非洲 (Africa)
+    "South Africa": "Africa", "Nigeria": "Africa", "Kenya": "Africa", "Egypt": "Africa",
+    "Morocco": "Africa", "Algeria": "Africa", "Tunisia": "Africa", "Libya": "Africa",
+    "Sudan": "Africa", "Ethiopia": "Africa", "Somalia": "Africa", "Eritrea": "Africa",
+    "Ghana": "Africa", "Ivory Coast": "Africa", "Côte d'Ivoire": "Africa",
+    "Cameroon": "Africa", "Senegal": "Africa", "Uganda": "Africa", "Tanzania": "Africa",
+    "Mozambique": "Africa", "Angola": "Africa", "Zambia": "Africa", "Zimbabwe": "Africa",
+    "Malawi": "Africa", "Botswana": "Africa", "Namibia": "Africa", "Mauritius": "Africa",
+    "Seychelles": "Africa", "Madagascar": "Africa", "Rwanda": "Africa", "Burundi": "Africa",
+    "Chad": "Africa", "Niger": "Africa", "Mali": "Africa", "Burkina Faso": "Africa",
+    "Benin": "Africa", "Togo": "Africa", "Liberia": "Africa", "Sierra Leone": "Africa",
+    "Guinea": "Africa", "Gabon": "Africa", "Congo": "Africa", "DRC": "Africa",
+    "Djibouti": "Africa", "Mauritania": "Africa", "Swaziland": "Africa", "Lesotho": "Africa"    
+    };
+
+    function getContinent(country) {
+        return countryToContinent[country] || "Other";
+    }
+
+    let map = L.map('map').setView([30.0, 100.0], 4);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+    }).addTo(map);
+
+    let markerMap = new Map();
+    let markers = [];
+    let currentList = [];
+
+    async function fetchRealTimeData() {
+        if (!SCRIPT_URL || SCRIPT_URL.includes("YOUR_ID")) return null;
+        try {
+            const url = SCRIPT_URL + (SCRIPT_URL.includes('?') ? '&' : '?') + 't=' + Date.now();
+            const res = await fetch(url, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.error("API error:", e);
+            return null;
+        }
+    }
+
+    function mergeNewData(records) {
+        if (!records || !records.length) return false;
+        let added = 0;
+        for (let r of records) {
+            const key = `${r.name}|${r.country}|${r.city}|${r.lat}|${r.lng}`;
+            if (!markerMap.has(key)) {
+                markerMap.set(key, { ...r, ts: Date.now() });
+                added++;
+            }
+        }
+        if (added === 0) return false;
+        currentList = Array.from(markerMap.values()).sort((a,b) => a.ts - b.ts);
+        return true;
+    }
+
+    function renderMapFromList(list) {
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+        list.forEach(p => {
+            const marker = L.marker([p.lat, p.lng]).addTo(map);
+            marker.bindPopup(`<b>${escapeHtml(p.name)}</b><br>📍 ${escapeHtml(p.city)}, ${escapeHtml(p.country)}`);
+            markers.push(marker);
+        });
+        document.getElementById('pinCount').innerText = list.length;
+
+        const recentDiv = document.getElementById('recentList');
+        if (list.length === 0) {
+            recentDiv.innerHTML = 'No participants yet. Be the first! ✨';
+        } else {
+            recentDiv.innerHTML = list.slice().reverse().slice(0, 12).map(p =>
+                `<div class="recent-item">📍 <strong>${escapeHtml(p.name)}</strong> from ${escapeHtml(p.city)}, ${escapeHtml(p.country)}</div>`
+            ).join('');
+        }
+        document.getElementById('map').style.boxShadow = '0 0 20px #00d4ff';
+        setTimeout(() => document.getElementById('map').style.boxShadow = '', 400);
+    }
+
+    async function syncAndMerge() {
+        const statusDiv = document.getElementById('statusMsg');
+        statusDiv.innerHTML = '🔄 Syncing...';
+        const fresh = await fetchRealTimeData();
+        if (fresh !== null) {
+            const changed = mergeNewData(fresh);
+            if (changed) {
+                renderMapFromList(currentList);
+                statusDiv.innerHTML = `✅ Synced · ${currentList.length} markers · ${new Date().toLocaleTimeString()}`;
+            } else {
+                statusDiv.innerHTML = `🟢 ${currentList.length} markers · ${new Date().toLocaleTimeString()}`;
+            }
+        } else {
+            statusDiv.innerHTML = `⚠️ Check Apps Script URL · ${new Date().toLocaleTimeString()}`;
+        }
+    }
+
+    function showStatistics() {
+        const statsContent = document.getElementById('statsContent');
+        
+        const countryCount = {};
+        const continentCount = {};
+        
+        currentList.forEach(p => {
+            const country = p.country;
+            countryCount[country] = (countryCount[country] || 0) + 1;
+            const continent = getContinent(country);
+            continentCount[continent] = (continentCount[continent] || 0) + 1;
+        });
+        
+        const total = currentList.length;
+        
+        let html = `<p style="font-size: 1.2rem; margin-bottom: 16px;"><strong>Total Participants:</strong> ${total}</p>`;
+        
+        if (total === 0) {
+            html += '<p>No data yet. Waiting for submissions...</p>';
+        } else {
+            html += `<h3>🌎 By Continent</h3>`;
+            const sortedContinents = Object.entries(continentCount).sort((a,b) => b[1] - a[1]);
+            for (let [continent, count] of sortedContinents) {
+                const percentage = ((count / total) * 100).toFixed(1);
+                html += `<div style="margin: 8px 0;"><strong>${continent}:</strong> ${count} (${percentage}%)</div>`;
+            }
+            
+            html += `<h3>🏳️ By Country (Top 10)</h3>`;
+            const sortedCountries = Object.entries(countryCount).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            for (let [country, count] of sortedCountries) {
+                const percentage = ((count / total) * 100).toFixed(1);
+                html += `<div style="margin: 8px 0;"><strong>${country}:</strong> ${count} (${percentage}%)</div>`;
+            }
+        }
+        
+        statsContent.innerHTML = html;
+        document.getElementById('statsModal').style.display = 'flex';
+    }
+
+    function escapeHtml(str) { return String(str || '').replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[m]); }
+
+    function exportToExcel() {
+        if (!currentList.length) { alert('No data'); return; }
+        const ws = XLSX.utils.json_to_sheet(currentList);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Birthplaces');
+        XLSX.writeFile(wb, `birthplace_${new Date().toISOString().slice(0,19)}.xlsx`);
+    }
+
+    function setupQR() {
+        if (SUBMIT_PAGE_URL && !SUBMIT_PAGE_URL.includes("YOUR_SUBMIT")) {
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(SUBMIT_PAGE_URL)}`;
+            document.getElementById('qrCodeContainer').innerHTML = `<img src="${qrUrl}" width="100" height="100" style="border-radius:12px;">`;
+            document.getElementById('formLinkDisplay').innerHTML = `<a href="${SUBMIT_PAGE_URL}" target="_blank" style="color:#00d4ff;">📝 Open Form to Submit</a>`;
+        }
+    }
+
+    setupQR();
+    syncAndMerge();
+    setInterval(syncAndMerge, 3000);
+    document.getElementById('exportBtn').onclick = exportToExcel;
+    document.getElementById('refreshBtn').onclick = syncAndMerge;
+    document.getElementById('statsBtn').onclick = showStatistics;
+    document.getElementById('closeStatsBtn').onclick = () => {
+        document.getElementById('statsModal').style.display = 'none';
+    };
+    document.getElementById('statsModal').onclick = (e) => {
+        if (e.target === document.getElementById('statsModal')) {
+            document.getElementById('statsModal').style.display = 'none';
+        }
+    };
+</script>
+</body>
+</html>
